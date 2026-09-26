@@ -1,0 +1,31 @@
+# Dependencies and build output
+node_modules/
+dist/
+dist-ssr/
+coverage/
+
+# Environment files (keep the committed .env.example templates)
+.env
+.env.*
+!.env.example
+
+# Local SQLite databases
+*.db
+*.db-shm
+*.db-wal
+
+# Local debug scripts
+backend/check-db.ts
+backend/debug-db.ts
+backend/debug-db.mjs
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor and OS files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
