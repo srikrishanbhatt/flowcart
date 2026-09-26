@@ -47,6 +47,16 @@ type OrderItemRow = {
   createdAt: string
 }
 
+const insufficientStockError = (productId: number, requested: number, available?: number) =>
+  Object.assign(
+    new Error(
+      available === undefined
+        ? `Insufficient stock for product ${productId}. Requested ${requested}.`
+        : `Insufficient stock for product ${productId}. Requested ${requested}, available ${available}.`,
+    ),
+    { statusCode: 400 },
+  )
+
 export class CartRepository {
   async listCartItems(): Promise<Cart[]> {
     const databasePool = await getReadyDatabasePool()
@@ -291,62 +301,68 @@ export class OrderRepository {
       return order
     }
 
-    const productIds = [...new Set(input.items.map((item) => item.productId))]
-    const placeholders = productIds.map((_, index) => `$${index + 1}`).join(', ')
-    const productResult = await databasePool.query(
-      `SELECT id, stock FROM products WHERE id IN (${placeholders})`,
-      productIds,
-    )
-
-    const productStockMap = new Map<number, number>(
-      productResult.rows.map((row) => [Number(row.id), Number(row.stock)]),
-    )
-
-    for (const item of input.items) {
-      const availableStock = productStockMap.get(item.productId)
-
-      if (availableStock === undefined) {
-        throw Object.assign(new Error(`Product ${item.productId} not found`), {
-          statusCode: 404,
-        })
-      }
-
-      if (item.quantity > availableStock) {
-        throw Object.assign(
-          new Error(
-            `Insufficient stock for product ${item.productId}. Requested ${item.quantity}, available ${availableStock}.`,
-          ),
-          { statusCode: 400 },
-        )
-      }
-    }
-
     const total = input.items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
 
-    const orderResult = await databasePool.query(
-      `INSERT INTO orders (user_id, total, status)
-       VALUES ($1, $2, 'PENDING')
-       RETURNING id, user_id as "userId", total, status, created_at as "createdAt"`,
-      [input.userId, total],
-    )
-
-    const orderRow: OrderRow = orderResult.rows[0]
-    const orderId = Number(orderRow.id)
-
-    for (const item of input.items) {
-      await databasePool.query(
-        `INSERT INTO order_items (order_id, product_id, quantity, unit_price)
-         VALUES ($1, $2, $3, $4)`,
-        [orderId, item.productId, item.quantity, item.unitPrice],
+    // Stock check, order insert and stock decrement succeed or fail together.
+    const { orderRow, orderId } = await databasePool.transaction(async (query) => {
+      const productIds = [...new Set(input.items.map((item) => item.productId))]
+      const placeholders = productIds.map((_, index) => `$${index + 1}`).join(', ')
+      const productResult = await query(
+        `SELECT id, stock FROM products WHERE id IN (${placeholders})`,
+        productIds,
       )
 
-      await databasePool.query(
-        `UPDATE products
-         SET stock = stock - $1
-         WHERE id = $2`,
-        [item.quantity, item.productId],
+      const productStockMap = new Map<number, number>(
+        productResult.rows.map((row) => [Number(row.id), Number(row.stock)]),
       )
-    }
+
+      for (const item of input.items) {
+        const availableStock = productStockMap.get(item.productId)
+
+        if (availableStock === undefined) {
+          throw Object.assign(new Error(`Product ${item.productId} not found`), {
+            statusCode: 404,
+          })
+        }
+
+        if (item.quantity > availableStock) {
+          throw insufficientStockError(item.productId, item.quantity, availableStock)
+        }
+      }
+
+      const orderResult = await query(
+        `INSERT INTO orders (user_id, total, status)
+         VALUES ($1, $2, 'PENDING')
+         RETURNING id, user_id as "userId", total, status, created_at as "createdAt"`,
+        [input.userId, total],
+      )
+
+      const orderRow: OrderRow = orderResult.rows[0]
+      const orderId = Number(orderRow.id)
+
+      for (const item of input.items) {
+        await query(
+          `INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+           VALUES ($1, $2, $3, $4)`,
+          [orderId, item.productId, item.quantity, item.unitPrice],
+        )
+
+        // The stock guard stops a concurrent order from taking the same units between
+        // the check above and this update.
+        const stockUpdate = await query(
+          `UPDATE products
+           SET stock = stock - $1
+           WHERE id = $2 AND stock >= $1`,
+          [item.quantity, item.productId],
+        )
+
+        if (stockUpdate.rowCount === 0) {
+          throw insufficientStockError(item.productId, item.quantity)
+        }
+      }
+
+      return { orderRow, orderId }
+    })
 
     return {
       id: orderId,

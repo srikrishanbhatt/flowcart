@@ -9,8 +9,12 @@ type QueryResult = {
   rowCount: number
 }
 
+export type QueryFn = (sql: string, params?: unknown[]) => Promise<QueryResult> | QueryResult
+
 type DatabasePool = {
-  query: (sql: string, params?: unknown[]) => Promise<QueryResult> | QueryResult
+  query: QueryFn
+  // Runs `work` on a single connection inside BEGIN/COMMIT, rolling back if it throws.
+  transaction: <T>(work: (query: QueryFn) => Promise<T>) => Promise<T>
   end: () => Promise<void>
   isInitialized?: boolean
   database?: any
@@ -29,8 +33,14 @@ const resolveSQLitePath = () => {
 }
 
 const normalizeSqliteQuery = (sql: string, params: unknown[] = []) => {
-  const normalizedSql = sql.trim().replace(/\$\d+/g, '?')
-  return { sql: normalizedSql, params }
+  // SQLite binds `?` positionally, so expand params to match each $n occurrence
+  // (supports reused or out-of-order placeholders).
+  const orderedParams: unknown[] = []
+  const normalizedSql = sql.trim().replace(/\$(\d+)/g, (_match, index: string) => {
+    orderedParams.push(params[Number(index) - 1])
+    return '?'
+  })
+  return { sql: normalizedSql, params: orderedParams }
 }
 
 const executeSqliteQuery = (database: Database.Database, sql: string, params: unknown[] = []) => {
@@ -73,6 +83,20 @@ const createSqlitePool = (): DatabasePool => {
   return {
     database,
     query: (sql: string, params: unknown[] = []) => executeSqliteQuery(database, sql, params),
+    // SQLite has one connection, so this is only safe while requests don't interleave;
+    // it is a local fallback, Postgres is the real target.
+    transaction: async (work) => {
+      database.exec('BEGIN')
+
+      try {
+        const result = await work((sql, params = []) => executeSqliteQuery(database, sql, params))
+        database.exec('COMMIT')
+        return result
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+    },
     end: async () => {
       database.close()
       pool = null
@@ -92,6 +116,24 @@ const createPostgresPool = (): DatabasePool => {
       return {
         rows: result.rows,
         rowCount: result.rowCount ?? result.rows.length,
+      }
+    },
+    transaction: async (work) => {
+      const client = await pgPool.connect()
+
+      try {
+        await client.query('BEGIN')
+        const result = await work(async (sql, params = []) => {
+          const queryResult = await client.query(sql, params)
+          return { rows: queryResult.rows, rowCount: queryResult.rowCount ?? queryResult.rows.length }
+        })
+        await client.query('COMMIT')
+        return result
+      } catch (error) {
+        await client.query('ROLLBACK')
+        throw error
+      } finally {
+        client.release()
       }
     },
     end: async () => {

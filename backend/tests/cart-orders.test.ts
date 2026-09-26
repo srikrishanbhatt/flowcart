@@ -94,4 +94,35 @@ describe('Cart and Orders API', () => {
     expect(response.status).toBe(200)
     expect(response.body.status).toBe('PAID')
   })
+
+  it('rolls back the whole order when a later line runs out of stock', async () => {
+    const createProductResponse = await request(app).post('/api/products').send({
+      name: 'Last Unit Webcam',
+      price: 59.99,
+      stock: 1,
+    })
+
+    expect(createProductResponse.status).toBe(201)
+    const productId = createProductResponse.body.id
+    const ordersBefore = await request(app).get('/api/orders')
+
+    // Each line passes the per-line stock check, but together they exceed stock.
+    const response = await request(app).post('/api/orders').send({
+      userId: 1,
+      items: [
+        { productId, quantity: 1, unitPrice: 59.99 },
+        { productId, quantity: 1, unitPrice: 59.99 },
+      ],
+    })
+
+    expect(response.status).toBe(400)
+    expect(response.body.message).toMatch(/stock/i)
+
+    const products = await request(app).get('/api/products')
+    const product = products.body.find((item: any) => Number(item.id) === Number(productId))
+    expect(Number(product.stock)).toBe(1)
+
+    const ordersAfter = await request(app).get('/api/orders')
+    expect(ordersAfter.body).toHaveLength(ordersBefore.body.length)
+  })
 })
