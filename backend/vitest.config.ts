@@ -8,6 +8,8 @@ export default defineConfig({
     env: {
       NODE_ENV: 'test',
       DATABASE_URL: resolveTestDatabaseUrl(),
+      // Test-only value so the suite runs without a local .env (e.g. in CI).
+      JWT_SECRET: 'test-only-jwt-secret-not-used-anywhere-else',
     },
   },
 })

@@ -1,20 +1,19 @@
-version: '3.9'
-
+# Local PostgreSQL. Credentials come from backend/.env (Compose reads it automatically).
 services:
   postgres:
     image: postgres:16-alpine
     container_name: flowcart-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: flowcart
-      POSTGRES_USER: flowcart_user
-      POSTGRES_PASSWORD: flowcart_password
+      POSTGRES_USER: ${POSTGRES_USER:-flowcart}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in backend/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-flowcart}
     ports:
       - '5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U flowcart_user -d flowcart']
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
       interval: 10s
       timeout: 5s
       retries: 5

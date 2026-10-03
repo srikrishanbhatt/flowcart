@@ -11,8 +11,11 @@ export const resolveTestDatabaseUrl = () => {
     return process.env.TEST_DATABASE_URL
   }
 
-  const devUrl = process.env.DATABASE_URL ?? 'postgresql://postgres:root@localhost:5432/flowcart'
-  const url = new URL(devUrl)
+  if (!process.env.DATABASE_URL) {
+    throw new Error('Set TEST_DATABASE_URL or DATABASE_URL (see .env.example) to run the tests')
+  }
+
+  const url = new URL(process.env.DATABASE_URL)
   url.pathname = `/${TEST_DATABASE_NAME}`
   return url.toString()
 }
