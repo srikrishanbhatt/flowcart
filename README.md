@@ -220,8 +220,37 @@ Examples:
 
 ## Current status
 
-This repository is currently being prepared for Phase 1 documentation and setup.
+- **Phase 1 — Project Foundation:** complete.
+- **Phase 2 — Database and CRUD:** in progress. Core tables and CRUD endpoints exist; migrations, indexes, pagination/filtering/sorting and inventory are still to do.
+- **Phase 3 — Authentication:** registration, login and `/me` exist, but routes are not protected yet. This will be reworked in Phase 3.
+
+## Getting started
+
+Prerequisites: Node.js 22+ and PostgreSQL 16 (installed locally, or via `docker compose up -d` in `backend/`).
+
+```bash
+# Backend
+cd backend
+cp .env.example .env      # then fill in DATABASE_URL and JWT_SECRET
+npm install
+npm run dev               # http://localhost:4000/api/health
+
+# Frontend (in a second terminal)
+cd frontend
+cp .env.example .env
+npm install
+npm run dev               # http://localhost:5173
+```
+
+Quality checks, available in both `backend/` and `frontend/`:
+
+| Command | Purpose |
+|---|---|
+| `npm run lint` | ESLint |
+| `npm run format` / `npm run format:check` | Prettier |
+| `npm run typecheck` (backend) / `npm run build` (frontend) | TypeScript |
+| `npm test` (backend) | Vitest + Supertest against a separate `flowcart_test` database |
 
 ## Next step
 
-Proceed with Phase 1 foundation work after confirming the architecture and documentation structure.
+Finish Phase 2: migrations, indexes, pagination/filtering/sorting and the inventory model.
