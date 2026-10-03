@@ -8,7 +8,6 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(4000),
   FRONTEND_URL: z.string().default('http://localhost:5173'),
   DATABASE_URL: z.string().default('postgresql://postgres:root@localhost:5432/flowcart'),
-  DB_CLIENT: z.enum(['postgres', 'sqlite']).default('postgres'),
   DB_HOST: z.string().default('localhost'),
   DB_PORT: z.coerce.number().default(5432),
   DB_NAME: z.string().default('flowcart'),

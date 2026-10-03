@@ -1,9 +1,8 @@
 import type { ErrorRequestHandler } from 'express'
 import { ZodError } from 'zod'
 
-// Postgres reports unique violations as SQLSTATE 23505; better-sqlite3 uses its own code.
-const isUniqueViolation = (error: any) =>
-  error?.code === '23505' || error?.code === 'SQLITE_CONSTRAINT_UNIQUE'
+// Postgres reports unique violations as SQLSTATE 23505.
+const isUniqueViolation = (error: any) => error?.code === '23505'
 
 export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
   let statusCode = typeof error.statusCode === 'number' ? error.statusCode : 500

@@ -1,432 +1,64 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import Database from 'better-sqlite3'
-import { Pool } from 'pg'
+import fs from 'node:fs/promises'
+import pg from 'pg'
 import env from './env.js'
 
-type QueryResult = {
+export type QueryResult = {
   rows: any[]
   rowCount: number
 }
 
-export type QueryFn = (sql: string, params?: unknown[]) => Promise<QueryResult> | QueryResult
+export type QueryFn = (sql: string, params?: unknown[]) => Promise<QueryResult>
 
-type DatabasePool = {
-  query: QueryFn
-  // Runs `work` on a single connection inside BEGIN/COMMIT, rolling back if it throws.
-  transaction: <T>(work: (query: QueryFn) => Promise<T>) => Promise<T>
-  end: () => Promise<void>
-  isInitialized?: boolean
-  database?: any
-}
+// One shared pool per process: it reuses TCP connections instead of opening one per query.
+let pool: pg.Pool | null = null
 
-let pool: DatabasePool | null = null
-
-const isPostgresUrl = (value?: string) => Boolean(value && /^(postgres|postgresql):\/\//i.test(value))
-
-export const isDatabaseInitialized = (databasePool: any) => Boolean(databasePool?.database?._flowcartInitialized || databasePool?.isInitialized)
-
-const resolveSQLitePath = () => {
-  const url = env.DATABASE_URL ?? 'sqlite:./flowcart.db'
-  const rawPath = url.startsWith('sqlite:') ? url.replace(/^sqlite:/, '') : url
-  return path.resolve(process.cwd(), rawPath)
-}
-
-const normalizeSqliteQuery = (sql: string, params: unknown[] = []) => {
-  // SQLite binds `?` positionally, so expand params to match each $n occurrence
-  // (supports reused or out-of-order placeholders).
-  const orderedParams: unknown[] = []
-  const normalizedSql = sql.trim().replace(/\$(\d+)/g, (_match, index: string) => {
-    orderedParams.push(params[Number(index) - 1])
-    return '?'
-  })
-  return { sql: normalizedSql, params: orderedParams }
-}
-
-const executeSqliteQuery = (database: Database.Database, sql: string, params: unknown[] = []) => {
-  const { sql: sqliteSql, params: sqliteParams } = normalizeSqliteQuery(sql, params)
-  const statement = database.prepare(sqliteSql)
-
-  if (/\bRETURNING\b/i.test(sqliteSql)) {
-    const rows = sqliteParams.length > 0 ? statement.all(...sqliteParams) : statement.all()
-    return { rows, rowCount: rows.length }
-  }
-
-  if (/^\s*SELECT\b/i.test(sqliteSql)) {
-    const rows = sqliteParams.length > 0 ? statement.all(...sqliteParams) : statement.all()
-    return { rows, rowCount: rows.length }
-  }
-
-  if (/^\s*(CREATE|ALTER|DROP|PRAGMA|BEGIN|COMMIT)\b/i.test(sqliteSql)) {
-    const result = sqliteParams.length > 0 ? statement.run(...sqliteParams) : statement.run()
-    return { rows: [], rowCount: Number(result.changes ?? 0) }
-  }
-
-  if (/^\s*(INSERT|UPDATE|DELETE)\b/i.test(sqliteSql)) {
-    const result = sqliteParams.length > 0 ? statement.run(...sqliteParams) : statement.run()
-    return { rows: [], rowCount: Number(result.changes ?? 0) }
-  }
-
-  const rows = sqliteParams.length > 0 ? statement.all(...sqliteParams) : statement.all()
-  return { rows, rowCount: rows.length }
-}
-
-const createSqlitePool = (): DatabasePool => {
-  const sqlitePath = resolveSQLitePath()
-  const sqliteDirectory = path.dirname(sqlitePath)
-  fs.mkdirSync(sqliteDirectory, { recursive: true })
-
-  const database = new Database(sqlitePath)
-  ;(database as any)._flowcartInitialized = false
-  database.pragma('journal_mode = WAL')
-
-  return {
-    database,
-    query: (sql: string, params: unknown[] = []) => executeSqliteQuery(database, sql, params),
-    // SQLite has one connection, so this is only safe while requests don't interleave;
-    // it is a local fallback, Postgres is the real target.
-    transaction: async (work) => {
-      database.exec('BEGIN')
-
-      try {
-        const result = await work((sql, params = []) => executeSqliteQuery(database, sql, params))
-        database.exec('COMMIT')
-        return result
-      } catch (error) {
-        database.exec('ROLLBACK')
-        throw error
-      }
-    },
-    end: async () => {
-      database.close()
-      pool = null
-    },
-  }
-}
-
-const createPostgresPool = (): DatabasePool => {
-  const connectionString =
-    env.DATABASE_URL ??
-    `postgresql://${env.DB_USER}:${env.DB_PASSWORD}@${env.DB_HOST}:${env.DB_PORT}/${env.DB_NAME}`
-  const pgPool = new Pool({ connectionString })
-
-  return {
-    query: async (sql: string, params: unknown[] = []) => {
-      const result = await pgPool.query(sql, params)
-      return {
-        rows: result.rows,
-        rowCount: result.rowCount ?? result.rows.length,
-      }
-    },
-    transaction: async (work) => {
-      const client = await pgPool.connect()
-
-      try {
-        await client.query('BEGIN')
-        const result = await work(async (sql, params = []) => {
-          const queryResult = await client.query(sql, params)
-          return { rows: queryResult.rows, rowCount: queryResult.rowCount ?? queryResult.rows.length }
-        })
-        await client.query('COMMIT')
-        return result
-      } catch (error) {
-        await client.query('ROLLBACK')
-        throw error
-      } finally {
-        client.release()
-      }
-    },
-    end: async () => {
-      await pgPool.end()
-      pool = null
-    },
-    isInitialized: false,
-  }
-}
-
-export const getDatabasePool = () => {
-  if (pool) {
-    return pool
-  }
-
-  const databaseUrl =
-    env.DATABASE_URL ??
-    `postgresql://${env.DB_USER}:${env.DB_PASSWORD}@${env.DB_HOST}:${env.DB_PORT}/${env.DB_NAME}`
-
-  if (isPostgresUrl(databaseUrl) || env.DB_CLIENT === 'postgres') {
-    pool = createPostgresPool()
-    return pool
-  }
-
-  pool = createSqlitePool()
+const getPool = () => {
+  pool ??= new pg.Pool({ connectionString: env.DATABASE_URL })
   return pool
 }
 
-export const isDatabaseAvailable = async (): Promise<boolean> => {
-  const databasePool = getDatabasePool()
+const toQueryResult = (result: pg.QueryResult): QueryResult => ({
+  rows: result.rows,
+  rowCount: result.rowCount ?? result.rows.length,
+})
 
-  if (!databasePool) {
-    return false
-  }
+export const query: QueryFn = async (sql, params = []) => toQueryResult(await getPool().query(sql, params))
+
+// Runs `work` on a single connection inside BEGIN/COMMIT, rolling back if it throws.
+// A transaction must stay on one connection, which is why it can't use the shared `query`.
+export const transaction = async <T>(work: (query: QueryFn) => Promise<T>): Promise<T> => {
+  const client = await getPool().connect()
 
   try {
-    await databasePool.query('SELECT 1')
+    await client.query('BEGIN')
+    const result = await work(async (sql, params = []) => toQueryResult(await client.query(sql, params)))
+    await client.query('COMMIT')
+    return result
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export const isDatabaseAvailable = async (): Promise<boolean> => {
+  try {
+    await query('SELECT 1')
     return true
   } catch {
     return false
   }
 }
 
+// Resolves to backend/db from both src/config (tsx) and dist/config (compiled build).
+const sqlFile = (name: string) => new URL(`../../db/${name}`, import.meta.url)
+
+// Creates tables and demo data. Both files are idempotent, so this is safe on every startup.
 export const initializeDatabase = async () => {
-  const databasePool = getDatabasePool()
-
-  if (!databasePool) {
-    return
-  }
-
-  if (isDatabaseInitialized(databasePool)) {
-    return
-  }
-
-  if (isPostgresUrl(env.DATABASE_URL) || env.DB_CLIENT === 'postgres') {
-    await databasePool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        email TEXT NOT NULL UNIQUE,
-        password_hash TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'CUSTOMER',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `)
-
-    await databasePool.query(`
-      CREATE TABLE IF NOT EXISTS categories (
-        id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        slug TEXT NOT NULL UNIQUE,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `)
-
-    await databasePool.query(`
-      CREATE TABLE IF NOT EXISTS products (
-        id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL,
-        slug TEXT NOT NULL UNIQUE,
-        description TEXT,
-        price NUMERIC(10,2) NOT NULL,
-        stock INTEGER NOT NULL DEFAULT 0,
-        category_id INTEGER,
-        is_active BOOLEAN NOT NULL DEFAULT TRUE,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `)
-
-    await databasePool.query(`
-      CREATE TABLE IF NOT EXISTS carts (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `)
-
-    await databasePool.query(`
-      CREATE TABLE IF NOT EXISTS cart_items (
-        id SERIAL PRIMARY KEY,
-        cart_id INTEGER NOT NULL REFERENCES carts(id) ON DELETE CASCADE,
-        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-        quantity INTEGER NOT NULL DEFAULT 1,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `)
-
-    await databasePool.query(`
-      CREATE TABLE IF NOT EXISTS orders (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-        total NUMERIC(12,2) NOT NULL,
-        status TEXT NOT NULL DEFAULT 'PENDING',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `)
-
-    await databasePool.query(`
-      CREATE TABLE IF NOT EXISTS order_items (
-        id SERIAL PRIMARY KEY,
-        order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
-        quantity INTEGER NOT NULL,
-        unit_price NUMERIC(12,2) NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `)
-
-    const userCount = await databasePool.query('SELECT COUNT(*) AS count FROM users')
-    if (Number(userCount.rows[0].count) === 0) {
-      await databasePool.query(
-        `INSERT INTO users (email, password_hash, role) VALUES ($1, $2, $3)`,
-        ['admin@flowcart.dev', 'demo-password-hash', 'ADMIN'],
-      )
-    }
-
-    const categoryCount = await databasePool.query('SELECT COUNT(*) AS count FROM categories')
-    if (Number(categoryCount.rows[0].count) === 0) {
-      await databasePool.query(
-        `INSERT INTO categories (name, slug) VALUES ($1, $2), ($3, $4)
-         ON CONFLICT (slug) DO NOTHING`,
-        ['Accessories', 'accessories', 'Office', 'office'],
-      )
-    }
-
-    const productCount = await databasePool.query('SELECT COUNT(*) AS count FROM products')
-    if (Number(productCount.rows[0].count) === 0) {
-      await databasePool.query(
-        `INSERT INTO products (name, slug, description, price, stock, category_id, is_active)
-         VALUES ($1, $2, $3, $4, $5, (SELECT id FROM categories WHERE slug = $6), $7),
-                ($8, $9, $10, $11, $12, (SELECT id FROM categories WHERE slug = $13), $14),
-                ($15, $16, $17, $18, $19, (SELECT id FROM categories WHERE slug = $20), $21),
-                ($22, $23, $24, $25, $26, (SELECT id FROM categories WHERE slug = $27), $28)
-         ON CONFLICT (slug) DO NOTHING`,
-        [
-          'FlowCart Pro Headset',
-          'flowcart-pro-headset',
-          'Wireless headset for daily productivity and immersive calls.',
-          129.99,
-          18,
-          'accessories',
-          true,
-          'Ergo Desk Mat',
-          'ergo-desk-mat',
-          'Comfortable work surface for long coding and design sessions.',
-          69,
-          24,
-          'accessories',
-          true,
-          'Daily Planner Kit',
-          'daily-planner-kit',
-          'Premium planner and stationery set for organized routines.',
-          39.5,
-          10,
-          'office',
-          true,
-          'Focus Lamp Pro',
-          'focus-lamp-pro',
-          'Warm, adjustable lighting that helps you stay on task through long sessions.',
-          88,
-          12,
-          'office',
-          true,
-        ],
-      )
-    }
-
-    databasePool.isInitialized = true
-    return
-  }
-
-  await databasePool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'CUSTOMER',
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-
-  await databasePool.query(`
-    CREATE TABLE IF NOT EXISTS categories (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      slug TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-
-  await databasePool.query(`
-    CREATE TABLE IF NOT EXISTS products (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      slug TEXT NOT NULL UNIQUE,
-      description TEXT,
-      price REAL NOT NULL,
-      stock INTEGER NOT NULL DEFAULT 0,
-      category_id INTEGER,
-      is_active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-
-  await databasePool.query(`
-    CREATE TABLE IF NOT EXISTS carts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-
-  await databasePool.query(`
-    CREATE TABLE IF NOT EXISTS cart_items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      cart_id INTEGER NOT NULL REFERENCES carts(id) ON DELETE CASCADE,
-      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-      quantity INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-
-  await databasePool.query(`
-    CREATE TABLE IF NOT EXISTS orders (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-      total REAL NOT NULL,
-      status TEXT NOT NULL DEFAULT 'PENDING',
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-
-  await databasePool.query(`
-    CREATE TABLE IF NOT EXISTS order_items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
-      quantity INTEGER NOT NULL,
-      unit_price REAL NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-
-  const userCount = await databasePool.query('SELECT COUNT(*) AS count FROM users')
-  if (Number(userCount.rows[0].count) === 0) {
-    await databasePool.query(`
-      INSERT INTO users (email, password_hash, role)
-      VALUES ('admin@flowcart.dev', 'demo-password-hash', 'ADMIN')
-    `)
-  }
-
-  const categoryCount = await databasePool.query('SELECT COUNT(*) AS count FROM categories')
-  if (Number(categoryCount.rows[0].count) === 0) {
-    await databasePool.query(`
-      INSERT INTO categories (name, slug)
-      VALUES ('Accessories', 'accessories'), ('Office', 'office')
-      ON CONFLICT(slug) DO NOTHING
-    `)
-  }
-
-  const productCount = await databasePool.query('SELECT COUNT(*) AS count FROM products')
-  if (Number(productCount.rows[0].count) === 0) {
-    await databasePool.query(`
-      INSERT INTO products (name, slug, description, price, stock, category_id, is_active)
-      VALUES
-        ('FlowCart Pro Headset', 'flowcart-pro-headset', 'Wireless headset for daily productivity and immersive calls.', 129.99, 18, (SELECT id FROM categories WHERE slug = 'accessories'), 1),
-        ('Ergo Desk Mat', 'ergo-desk-mat', 'Comfortable work surface for long coding and design sessions.', 69.00, 24, (SELECT id FROM categories WHERE slug = 'accessories'), 1),
-        ('Daily Planner Kit', 'daily-planner-kit', 'Premium planner and stationery set for organized routines.', 39.50, 10, (SELECT id FROM categories WHERE slug = 'office'), 1),
-        ('Focus Lamp Pro', 'focus-lamp-pro', 'Warm, adjustable lighting that helps you stay on task through long sessions.', 88.00, 12, (SELECT id FROM categories WHERE slug = 'office'), 1)
-      ON CONFLICT(slug) DO NOTHING
-    `)
-  }
-
-  ;(databasePool.database as any)._flowcartInitialized = true
+  // Multi-statement files go straight to the pool: pg returns one result per statement.
+  await getPool().query(await fs.readFile(sqlFile('schema.sql'), 'utf8'))
+  await getPool().query(await fs.readFile(sqlFile('seed.sql'), 'utf8'))
 }
 
 export const closeDatabasePool = async () => {
