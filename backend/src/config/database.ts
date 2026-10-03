@@ -1,4 +1,5 @@
-import fs from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { runner } from 'node-pg-migrate'
 import pg from 'pg'
 import env from './env.js'
 
@@ -55,14 +56,19 @@ export const isDatabaseAvailable = async (): Promise<boolean> => {
   }
 }
 
-// Resolves to backend/db from both src/config (tsx) and dist/config (compiled build).
-const sqlFile = (name: string) => new URL(`../../db/${name}`, import.meta.url)
+// Startup guard: running new code against an older schema fails in confusing ways
+// at request time, so refuse to start until `npm run migrate` has been run.
+export const findPendingMigrations = async (): Promise<string[]> => {
+  const pending = await runner({
+    databaseUrl: env.DATABASE_URL,
+    dir: fileURLToPath(new URL('../../db/migrations', import.meta.url)),
+    direction: 'up',
+    migrationsTable: 'pgmigrations',
+    dryRun: true,
+    log: () => {},
+  })
 
-// Creates tables and demo data. Both files are idempotent, so this is safe on every startup.
-export const initializeDatabase = async () => {
-  // Multi-statement files go straight to the pool: pg returns one result per statement.
-  await getPool().query(await fs.readFile(sqlFile('schema.sql'), 'utf8'))
-  await getPool().query(await fs.readFile(sqlFile('seed.sql'), 'utf8'))
+  return pending.map((migration) => migration.name)
 }
 
 export const closeDatabasePool = async () => {

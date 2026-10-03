@@ -1,11 +1,15 @@
-CREATE TABLE IF NOT EXISTS categories (
+-- Up Migration
+
+-- Baseline: the schema as it stood at the end of Phase 1.
+
+CREATE TABLE categories (
   id SERIAL PRIMARY KEY,
   name VARCHAR(255) NOT NULL UNIQUE,
   slug VARCHAR(255) NOT NULL UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS products (
+CREATE TABLE products (
   id SERIAL PRIMARY KEY,
   category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
   name VARCHAR(255) NOT NULL,
@@ -17,7 +21,7 @@ CREATE TABLE IF NOT EXISTS products (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE users (
   id SERIAL PRIMARY KEY,
   email VARCHAR(255) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
@@ -25,13 +29,13 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS carts (
+CREATE TABLE carts (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS cart_items (
+CREATE TABLE cart_items (
   id SERIAL PRIMARY KEY,
   cart_id INTEGER NOT NULL REFERENCES carts(id) ON DELETE CASCADE,
   product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
@@ -39,7 +43,7 @@ CREATE TABLE IF NOT EXISTS cart_items (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS orders (
+CREATE TABLE orders (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   total NUMERIC(10,2) NOT NULL,
@@ -47,7 +51,7 @@ CREATE TABLE IF NOT EXISTS orders (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS order_items (
+CREATE TABLE order_items (
   id SERIAL PRIMARY KEY,
   order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
   product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
@@ -55,3 +59,14 @@ CREATE TABLE IF NOT EXISTS order_items (
   unit_price NUMERIC(10,2) NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Down Migration
+
+-- Drop in reverse dependency order: children before the tables they reference.
+DROP TABLE IF EXISTS order_items;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS cart_items;
+DROP TABLE IF EXISTS carts;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS products;
+DROP TABLE IF EXISTS categories;

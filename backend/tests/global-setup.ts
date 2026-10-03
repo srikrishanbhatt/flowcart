@@ -1,8 +1,11 @@
+import { fileURLToPath } from 'node:url'
+import { runner } from 'node-pg-migrate'
 import pg from 'pg'
+import { seedDatabase } from '../scripts/seed.js'
 import { resolveTestDatabaseUrl } from './test-database.js'
 
 // Runs once before all test files: ensures the test database exists, wipes it,
-// then creates the schema and seed data so every run starts from the same state.
+// then applies migrations and seed data so every run starts from the same state.
 export default async function setup() {
   const testUrl = new URL(resolveTestDatabaseUrl())
   const databaseName = testUrl.pathname.slice(1)
@@ -35,8 +38,13 @@ export default async function setup() {
     await client.end()
   }
 
-  process.env.DATABASE_URL = testUrl.toString()
-  const { initializeDatabase, closeDatabasePool } = await import('../src/config/database.js')
-  await initializeDatabase()
-  await closeDatabasePool()
+  // Same path as a real deployment: apply every migration, then add demo data.
+  await runner({
+    databaseUrl: testUrl.toString(),
+    dir: fileURLToPath(new URL('../db/migrations', import.meta.url)),
+    direction: 'up',
+    migrationsTable: 'pgmigrations',
+    log: () => {},
+  })
+  await seedDatabase(testUrl.toString())
 }
