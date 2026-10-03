@@ -13,7 +13,7 @@ const createProductSchema = z.object({
   isActive: z.boolean().optional(),
 })
 
-router.get('/products', async (_req, res, next) => {
+router.get('/', async (_req, res, next) => {
   try {
     const products = await productService.listProducts()
     res.status(200).json(products)
@@ -22,7 +22,7 @@ router.get('/products', async (_req, res, next) => {
   }
 })
 
-router.post('/products', async (req, res, next) => {
+router.post('/', async (req, res, next) => {
   try {
     const payload = createProductSchema.parse(req.body)
     const product = await productService.createProduct(payload)

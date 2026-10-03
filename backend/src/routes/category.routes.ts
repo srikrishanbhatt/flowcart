@@ -8,7 +8,7 @@ const createCategorySchema = z.object({
   name: z.string().min(2),
 })
 
-router.get('/categories', async (_req, res, next) => {
+router.get('/', async (_req, res, next) => {
   try {
     const categories = await categoryService.listCategories()
     res.status(200).json(categories)
@@ -17,7 +17,7 @@ router.get('/categories', async (_req, res, next) => {
   }
 })
 
-router.post('/categories', async (req, res, next) => {
+router.post('/', async (req, res, next) => {
   try {
     const payload = createCategorySchema.parse(req.body)
     const category = await categoryService.createCategory(payload)

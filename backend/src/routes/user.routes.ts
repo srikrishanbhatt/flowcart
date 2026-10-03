@@ -10,7 +10,7 @@ const createUserSchema = z.object({
   role: z.enum(['CUSTOMER', 'ADMIN']).optional(),
 })
 
-router.get('/users', async (_req, res, next) => {
+router.get('/', async (_req, res, next) => {
   try {
     const users = await userService.listUsers()
     res.status(200).json(users)
@@ -19,7 +19,7 @@ router.get('/users', async (_req, res, next) => {
   }
 })
 
-router.post('/users', async (req, res, next) => {
+router.post('/', async (req, res, next) => {
   try {
     const payload = createUserSchema.parse(req.body)
     const user = await userService.createUser(payload)

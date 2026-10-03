@@ -7,6 +7,7 @@ import categoryRoutes from './routes/category.routes.js'
 import userRoutes from './routes/user.routes.js'
 import authRoutes from './routes/auth.routes.js'
 import cartRoutes from './routes/cart.routes.js'
+import orderRoutes from './routes/order.routes.js'
 import { errorHandler } from './middleware/errorHandler.js'
 import { notFoundMiddleware } from './middleware/notFound.js'
 
@@ -41,12 +42,14 @@ app.get('/', (_req, res) => {
   })
 })
 
-app.use('/api', healthRoutes)
-app.use('/api', productRoutes)
-app.use('/api', categoryRoutes)
-app.use('/api', userRoutes)
+// Each router owns one URL prefix, so this list doubles as the API's table of contents.
+app.use('/api/health', healthRoutes)
+app.use('/api/products', productRoutes)
+app.use('/api/categories', categoryRoutes)
+app.use('/api/users', userRoutes)
 app.use('/api/auth', authRoutes)
-app.use('/api', cartRoutes)
+app.use('/api/cart', cartRoutes)
+app.use('/api/orders', orderRoutes)
 
 app.use(notFoundMiddleware)
 app.use(errorHandler)

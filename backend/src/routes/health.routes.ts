@@ -5,7 +5,7 @@ const router = Router()
 
 // 503 when the database is unreachable, so load balancers and orchestrators
 // stop routing traffic to an instance that can't serve requests.
-router.get('/health', async (_req, res) => {
+router.get('/', async (_req, res) => {
   const databaseReady = await isDatabaseAvailable()
 
   res.status(databaseReady ? 200 : 503).json({
