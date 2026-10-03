@@ -221,7 +221,7 @@ Examples:
 ## Current status
 
 - **Phase 1 — Project Foundation:** complete.
-- **Phase 2 — Database and CRUD:** in progress. Core tables and CRUD endpoints exist; migrations, indexes, pagination/filtering/sorting and inventory are still to do.
+- **Phase 2 — Database and CRUD:** in progress. Core tables, CRUD endpoints and migrations exist; indexes, pagination/filtering/sorting and inventory are still to do.
 - **Phase 3 — Authentication:** registration, login and `/me` exist, but routes are not protected yet. This will be reworked in Phase 3.
 
 ## Getting started
@@ -233,6 +233,8 @@ Prerequisites: Node.js 22+ and PostgreSQL 16 (installed locally, or via `docker 
 cd backend
 cp .env.example .env      # then fill in DATABASE_URL and JWT_SECRET
 npm install
+npm run migrate           # apply database migrations
+npm run seed              # optional: demo products and categories
 npm run dev               # http://localhost:4000/api/health
 
 # Frontend (in a second terminal)
@@ -250,7 +252,8 @@ Quality checks, available in both `backend/` and `frontend/`:
 | `npm run format` / `npm run format:check` | Prettier |
 | `npm run typecheck` (backend) / `npm run build` (frontend) | TypeScript |
 | `npm test` (backend) | Vitest + Supertest against a separate `flowcart_test` database |
+| `npm run migrate:create <name>` (backend) | New SQL migration in `backend/db/migrations` (never edit one that has already run) |
 
 ## Next step
 
-Finish Phase 2: migrations, indexes, pagination/filtering/sorting and the inventory model.
+Finish Phase 2: indexes, pagination/filtering/sorting and the inventory model.
