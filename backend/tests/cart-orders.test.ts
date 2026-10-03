@@ -70,20 +70,24 @@ describe('Cart and Orders API', () => {
 
     expect(createProductResponse.status).toBe(201)
 
-    const response = await request(app).post('/api/orders').send({
-      userId: 1,
-      items: [{ productId: createProductResponse.body.id, quantity: 2, unitPrice: 49.99 }],
-    })
+    const response = await request(app)
+      .post('/api/orders')
+      .send({
+        userId: 1,
+        items: [{ productId: createProductResponse.body.id, quantity: 2, unitPrice: 49.99 }],
+      })
 
     expect(response.status).toBe(400)
     expect(response.body.message).toMatch(/stock|insufficient/i)
   })
 
   it('updates an order status', async () => {
-    const orderResponse = await request(app).post('/api/orders').send({
-      userId: 1,
-      items: [{ productId: 1, quantity: 1, unitPrice: 10 }],
-    })
+    const orderResponse = await request(app)
+      .post('/api/orders')
+      .send({
+        userId: 1,
+        items: [{ productId: 1, quantity: 1, unitPrice: 10 }],
+      })
 
     expect(orderResponse.status).toBe(201)
 
@@ -107,13 +111,15 @@ describe('Cart and Orders API', () => {
     const ordersBefore = await request(app).get('/api/orders')
 
     // Each line passes the per-line stock check, but together they exceed stock.
-    const response = await request(app).post('/api/orders').send({
-      userId: 1,
-      items: [
-        { productId, quantity: 1, unitPrice: 59.99 },
-        { productId, quantity: 1, unitPrice: 59.99 },
-      ],
-    })
+    const response = await request(app)
+      .post('/api/orders')
+      .send({
+        userId: 1,
+        items: [
+          { productId, quantity: 1, unitPrice: 59.99 },
+          { productId, quantity: 1, unitPrice: 59.99 },
+        ],
+      })
 
     expect(response.status).toBe(400)
     expect(response.body.message).toMatch(/stock/i)

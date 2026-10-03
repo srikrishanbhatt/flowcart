@@ -1,5 +1,13 @@
 import { query, transaction } from '../config/database.js'
-import type { Cart, CartItem, CreateCartItemInput, CreateOrderInput, Order, OrderItem, OrderStatus } from '../types/cart.js'
+import type {
+  Cart,
+  CartItem,
+  CreateCartItemInput,
+  CreateOrderInput,
+  Order,
+  OrderItem,
+  OrderStatus,
+} from '../types/cart.js'
 
 type CartRow = {
   id: number | string
@@ -110,10 +118,10 @@ export class CartRepository {
     const cartId = Number(cartResult.rows[0].id)
     const quantityToAdd = input.quantity ?? 1
 
-    const existingItemResult = await query(
-      `SELECT id FROM cart_items WHERE cart_id = $1 AND product_id = $2 LIMIT 1`,
-      [cartId, input.productId],
-    )
+    const existingItemResult = await query(`SELECT id FROM cart_items WHERE cart_id = $1 AND product_id = $2 LIMIT 1`, [
+      cartId,
+      input.productId,
+    ])
 
     if (existingItemResult.rowCount > 0) {
       await query(`UPDATE cart_items SET quantity = quantity + $1 WHERE id = $2`, [

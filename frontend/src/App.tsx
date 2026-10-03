@@ -117,9 +117,7 @@ function App() {
     const nextQuantity = (existingItem?.quantity ?? 0) + 1
 
     const nextCart = existingItem
-      ? cart.map((item) =>
-          item.productId === productId ? { ...item, quantity: nextQuantity } : item,
-        )
+      ? cart.map((item) => (item.productId === productId ? { ...item, quantity: nextQuantity } : item))
       : [...cart, { productId, quantity: 1 }]
 
     setCart(nextCart)
@@ -149,9 +147,7 @@ function App() {
         return currentCart.filter((item) => item.productId !== productId)
       }
 
-      return currentCart.map((item) =>
-        item.productId === productId ? { ...item, quantity: nextQuantity } : item,
-      )
+      return currentCart.map((item) => (item.productId === productId ? { ...item, quantity: nextQuantity } : item))
     })
   }
 
@@ -195,8 +191,7 @@ function App() {
 
   const visibleProducts = useMemo(() => {
     return products.filter((product) => {
-      const matchesCategory =
-        selectedCategory === 'all' || product.categoryId === Number(selectedCategory)
+      const matchesCategory = selectedCategory === 'all' || product.categoryId === Number(selectedCategory)
       const matchesSearch =
         product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         product.description.toLowerCase().includes(searchTerm.toLowerCase())
@@ -327,8 +322,12 @@ function App() {
             </p>
 
             <div className="hero-actions">
-              <button type="button" className="primary-action">Shop now</button>
-              <button type="button" className="secondary-action">Browse collection</button>
+              <button type="button" className="primary-action">
+                Shop now
+              </button>
+              <button type="button" className="secondary-action">
+                Browse collection
+              </button>
             </div>
 
             <div className="feature-row">
@@ -373,7 +372,6 @@ function App() {
             onCheckout={checkoutOrder}
           />
         </div>
-
       </section>
     </main>
   )

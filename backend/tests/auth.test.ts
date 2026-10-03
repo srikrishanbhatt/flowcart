@@ -32,9 +32,7 @@ describe('Auth API', () => {
       password: 'secret123',
     })
 
-    const response = await request(app)
-      .get('/api/auth/me')
-      .set('Authorization', `Bearer ${loginResponse.body.token}`)
+    const response = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${loginResponse.body.token}`)
 
     expect(response.status).toBe(200)
     expect(response.body.email).toBe('newuser@example.com')
