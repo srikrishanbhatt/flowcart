@@ -19,7 +19,7 @@ const toUser = (row: UserRow): User => ({
 
 export class UserRepository {
   async listUsers(): Promise<User[]> {
-    const result = await query(
+    const result = await query<UserRow>(
       `SELECT id, email, password_hash as "passwordHash", role, created_at as "createdAt"
        FROM users
        ORDER BY created_at DESC`,
@@ -29,7 +29,7 @@ export class UserRepository {
   }
 
   async findByEmail(email: string): Promise<User | null> {
-    const result = await query(
+    const result = await query<UserRow>(
       `SELECT id, email, password_hash as "passwordHash", role, created_at as "createdAt"
        FROM users
        WHERE LOWER(email) = $1
@@ -37,12 +37,12 @@ export class UserRepository {
       [email.toLowerCase()],
     )
 
-    const row: UserRow | undefined = result.rows[0]
+    const row = result.rows[0]
     return row ? toUser(row) : null
   }
 
   async createUser(input: CreateUserInput): Promise<User> {
-    const result = await query(
+    const result = await query<UserRow>(
       `INSERT INTO users (email, password_hash, role)
        VALUES ($1, $2, $3)
        RETURNING id, email, password_hash as "passwordHash", role, created_at as "createdAt"`,

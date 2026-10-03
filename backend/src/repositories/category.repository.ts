@@ -17,7 +17,7 @@ const toCategory = (row: CategoryRow): Category => ({
 
 export class CategoryRepository {
   async listCategories(): Promise<Category[]> {
-    const result = await query(
+    const result = await query<CategoryRow>(
       `SELECT id, name, slug, created_at as "createdAt"
        FROM categories
        ORDER BY created_at DESC`,
@@ -29,7 +29,7 @@ export class CategoryRepository {
   async createCategory(input: CreateCategoryInput): Promise<Category> {
     const slug = input.name.toLowerCase().replace(/\s+/g, '-')
 
-    const result = await query(
+    const result = await query<CategoryRow>(
       `INSERT INTO categories (name, slug)
        VALUES ($1, $2)
        RETURNING id, name, slug, created_at as "createdAt"`,

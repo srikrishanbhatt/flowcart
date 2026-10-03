@@ -82,17 +82,17 @@ const insufficientStockError = (productId: number, requested: number, available?
 
 export class CartRepository {
   async listCartItems(): Promise<Cart[]> {
-    const cartsResult = await query(
+    const cartsResult = await query<CartRow>(
       `SELECT id, user_id as "userId", created_at as "createdAt" FROM carts ORDER BY created_at DESC`,
     )
-    const itemsResult = await query(
+    const itemsResult = await query<CartItemRow>(
       `SELECT id, cart_id as "cartId", product_id as "productId", quantity, created_at as "createdAt"
        FROM cart_items ORDER BY created_at DESC`,
     )
 
     const itemsByCart = groupBy(itemsResult.rows.map(toCartItem), (item) => item.cartId)
 
-    return (cartsResult.rows as CartRow[]).map((row) => ({
+    return cartsResult.rows.map((row) => ({
       id: Number(row.id),
       userId: Number(row.userId),
       items: itemsByCart.get(Number(row.id)) ?? [],
@@ -128,17 +128,17 @@ export class CartRepository {
       ])
     }
 
-    const cartRowResult = await query(
+    const cartRowResult = await query<CartRow>(
       `SELECT id, user_id as "userId", created_at as "createdAt" FROM carts WHERE id = $1`,
       [cartId],
     )
-    const itemsResult = await query(
+    const itemsResult = await query<CartItemRow>(
       `SELECT id, cart_id as "cartId", product_id as "productId", quantity, created_at as "createdAt"
        FROM cart_items WHERE cart_id = $1 ORDER BY created_at DESC`,
       [cartId],
     )
 
-    const cartRow = cartRowResult.rows[0] as CartRow
+    const cartRow = cartRowResult.rows[0]
 
     return {
       id: Number(cartRow.id),
@@ -151,17 +151,17 @@ export class CartRepository {
 
 export class OrderRepository {
   async listOrders(): Promise<Order[]> {
-    const ordersResult = await query(
+    const ordersResult = await query<OrderRow>(
       `SELECT id, user_id as "userId", total, status, created_at as "createdAt" FROM orders ORDER BY created_at DESC`,
     )
-    const itemsResult = await query(
+    const itemsResult = await query<OrderItemRow>(
       `SELECT id, order_id as "orderId", product_id as "productId", quantity, unit_price as "unitPrice", created_at as "createdAt"
        FROM order_items ORDER BY created_at DESC`,
     )
 
     const itemsByOrder = groupBy(itemsResult.rows.map(toOrderItem), (item) => item.orderId)
 
-    return (ordersResult.rows as OrderRow[]).map((row) => toOrder(row, itemsByOrder.get(Number(row.id)) ?? []))
+    return ordersResult.rows.map((row) => toOrder(row, itemsByOrder.get(Number(row.id)) ?? []))
   }
 
   async createOrder(input: CreateOrderInput): Promise<Order> {
@@ -191,18 +191,18 @@ export class OrderRepository {
         }
       }
 
-      const orderResult = await query(
+      const orderResult = await query<OrderRow>(
         `INSERT INTO orders (user_id, total, status)
          VALUES ($1, $2, 'PENDING')
          RETURNING id, user_id as "userId", total, status, created_at as "createdAt"`,
         [input.userId, total],
       )
 
-      const orderRow: OrderRow = orderResult.rows[0]
+      const orderRow = orderResult.rows[0]
       const items: OrderItem[] = []
 
       for (const item of input.items) {
-        const itemResult = await query(
+        const itemResult = await query<OrderItemRow>(
           `INSERT INTO order_items (order_id, product_id, quantity, unit_price)
            VALUES ($1, $2, $3, $4)
            RETURNING id, order_id as "orderId", product_id as "productId", quantity, unit_price as "unitPrice", created_at as "createdAt"`,
@@ -229,7 +229,7 @@ export class OrderRepository {
   }
 
   async updateOrderStatus(orderId: number, status: OrderStatus): Promise<Order> {
-    const result = await query(
+    const result = await query<OrderRow>(
       `UPDATE orders
        SET status = $1
        WHERE id = $2
@@ -243,7 +243,7 @@ export class OrderRepository {
       })
     }
 
-    const itemsResult = await query(
+    const itemsResult = await query<OrderItemRow>(
       `SELECT id, order_id as "orderId", product_id as "productId", quantity, unit_price as "unitPrice", created_at as "createdAt"
        FROM order_items WHERE order_id = $1`,
       [orderId],

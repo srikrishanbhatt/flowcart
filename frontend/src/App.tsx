@@ -40,6 +40,21 @@ const fallbackCategories: Category[] = [
   { id: 2, name: 'Office', slug: 'office' },
 ]
 
+const readSavedSession = () => {
+  const savedSession = localStorage.getItem('flowcart-session')
+
+  if (!savedSession) {
+    return null
+  }
+
+  try {
+    return JSON.parse(savedSession) as { token: string; user: UserSession }
+  } catch {
+    localStorage.removeItem('flowcart-session')
+    return null
+  }
+}
+
 function App() {
   const [products, setProducts] = useState<Product[]>([])
   const [categories, setCategories] = useState<Category[]>(fallbackCategories)
@@ -49,26 +64,12 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [authMode, setAuthMode] = useState<AuthMode>('login')
   const [authForm, setAuthForm] = useState<AuthForm>({ email: '', password: '', role: 'CUSTOMER' })
-  const [user, setUser] = useState<UserSession | null>(null)
-  const [token, setToken] = useState<string | null>(null)
+  // Lazy initializers read the saved session once, during the first render,
+  // so there is no extra render and no window where the session looks logged out.
+  const [user, setUser] = useState<UserSession | null>(() => readSavedSession()?.user ?? null)
+  const [token, setToken] = useState<string | null>(() => readSavedSession()?.token ?? null)
   const [authMessage, setAuthMessage] = useState('')
   const [authError, setAuthError] = useState('')
-
-  useEffect(() => {
-    const savedSession = localStorage.getItem('flowcart-session')
-
-    if (!savedSession) {
-      return
-    }
-
-    try {
-      const parsedSession = JSON.parse(savedSession) as { token: string; user: UserSession }
-      setToken(parsedSession.token)
-      setUser(parsedSession.user)
-    } catch {
-      localStorage.removeItem('flowcart-session')
-    }
-  }, [])
 
   useEffect(() => {
     if (!token || !user) {

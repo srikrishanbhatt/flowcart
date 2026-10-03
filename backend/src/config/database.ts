@@ -2,12 +2,13 @@ import fs from 'node:fs/promises'
 import pg from 'pg'
 import env from './env.js'
 
-export type QueryResult = {
-  rows: any[]
+// Callers pass the row shape they expect, e.g. query<ProductRow>(...).
+export type QueryResult<T = Record<string, unknown>> = {
+  rows: T[]
   rowCount: number
 }
 
-export type QueryFn = (sql: string, params?: unknown[]) => Promise<QueryResult>
+export type QueryFn = <T = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<QueryResult<T>>
 
 // One shared pool per process: it reuses TCP connections instead of opening one per query.
 let pool: pg.Pool | null = null
@@ -17,12 +18,13 @@ const getPool = () => {
   return pool
 }
 
-const toQueryResult = (result: pg.QueryResult): QueryResult => ({
+const toQueryResult = <T>(result: pg.QueryResult): QueryResult<T> => ({
   rows: result.rows,
   rowCount: result.rowCount ?? result.rows.length,
 })
 
-export const query: QueryFn = async (sql, params = []) => toQueryResult(await getPool().query(sql, params))
+export const query: QueryFn = async <T>(sql: string, params: unknown[] = []) =>
+  toQueryResult<T>(await getPool().query(sql, params))
 
 // Runs `work` on a single connection inside BEGIN/COMMIT, rolling back if it throws.
 // A transaction must stay on one connection, which is why it can't use the shared `query`.
@@ -31,7 +33,9 @@ export const transaction = async <T>(work: (query: QueryFn) => Promise<T>): Prom
 
   try {
     await client.query('BEGIN')
-    const result = await work(async (sql, params = []) => toQueryResult(await client.query(sql, params)))
+    const result = await work(async <R>(sql: string, params: unknown[] = []) =>
+      toQueryResult<R>(await client.query(sql, params)),
+    )
     await client.query('COMMIT')
     return result
   } catch (error) {

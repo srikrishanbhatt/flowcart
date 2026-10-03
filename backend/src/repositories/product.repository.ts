@@ -27,7 +27,7 @@ const toProduct = (row: ProductRow): Product => ({
 
 export class ProductRepository {
   async listProducts(): Promise<Product[]> {
-    const result = await query(
+    const result = await query<ProductRow>(
       `SELECT id, name, slug, description, price, stock, category_id as "categoryId", is_active as "isActive", created_at as "createdAt"
        FROM products
        ORDER BY created_at DESC`,
@@ -39,7 +39,7 @@ export class ProductRepository {
   async createProduct(input: CreateProductInput): Promise<Product> {
     const slug = input.name.toLowerCase().replace(/\s+/g, '-')
 
-    const result = await query(
+    const result = await query<ProductRow>(
       `INSERT INTO products (name, slug, description, price, stock, category_id, is_active)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, name, slug, description, price, stock, category_id as "categoryId", is_active as "isActive", created_at as "createdAt"`,
