@@ -10,6 +10,7 @@ import cartRoutes from './routes/cart.routes.js'
 import orderRoutes from './routes/order.routes.js'
 import { errorHandler } from './middleware/errorHandler.js'
 import { notFoundMiddleware } from './middleware/notFound.js'
+import { requireAuth } from './middleware/requireAuth.js'
 
 const app = express()
 const allowedOrigins = [
@@ -48,7 +49,7 @@ app.use('/api/products', productRoutes)
 app.use('/api/categories', categoryRoutes)
 app.use('/api/users', userRoutes)
 app.use('/api/auth', authRoutes)
-app.use('/api/cart', cartRoutes)
+app.use('/api/cart', requireAuth, cartRoutes)
 app.use('/api/orders', orderRoutes)
 
 app.use(notFoundMiddleware)

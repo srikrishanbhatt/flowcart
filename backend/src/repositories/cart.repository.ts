@@ -1,257 +1,97 @@
-import { query, transaction } from '../config/database.js'
-import type {
-  Cart,
-  CartItem,
-  CreateCartItemInput,
-  CreateOrderInput,
-  Order,
-  OrderItem,
-  OrderStatus,
-} from '../types/cart.js'
-
-type CartRow = {
-  id: number | string
-  userId: number | string
-  createdAt: string
-}
+import { query } from '../config/database.js'
+import type { AddCartItemInput, Cart } from '../types/cart.js'
 
 type CartItemRow = {
-  id: number | string
-  cartId: number | string
   productId: number | string
   quantity: number | string
-  createdAt: string
 }
 
-type OrderRow = {
-  id: number | string
-  userId: number | string
-  total: number | string
-  status: string
-  createdAt: string
-}
+const notFound = (message: string) => Object.assign(new Error(message), { statusCode: 404 })
 
-type OrderItemRow = {
-  id: number | string
-  orderId: number | string
-  productId: number | string
-  quantity: number | string
-  unitPrice: number | string
-  createdAt: string
-}
-
-const toCartItem = (row: CartItemRow): CartItem => ({
-  id: Number(row.id),
-  cartId: Number(row.cartId),
-  productId: Number(row.productId),
-  quantity: Number(row.quantity),
-  createdAt: new Date(row.createdAt).toISOString(),
-})
-
-const toOrderItem = (row: OrderItemRow): OrderItem => ({
-  id: Number(row.id),
-  orderId: Number(row.orderId),
-  productId: Number(row.productId),
-  quantity: Number(row.quantity),
-  unitPrice: Number(row.unitPrice),
-  createdAt: new Date(row.createdAt).toISOString(),
-})
-
-const toOrder = (row: OrderRow, items: OrderItem[]): Order => ({
-  id: Number(row.id),
-  userId: Number(row.userId),
-  total: Number(row.total),
-  status: row.status as OrderStatus,
-  items,
-  createdAt: new Date(row.createdAt).toISOString(),
-})
-
-const groupBy = <T>(items: T[], key: (item: T) => number) => {
-  const groups = new Map<number, T[]>()
-
-  for (const item of items) {
-    const group = groups.get(key(item)) ?? []
-    group.push(item)
-    groups.set(key(item), group)
-  }
-
-  return groups
-}
-
-const insufficientStockError = (productId: number, requested: number, available?: number) =>
-  Object.assign(
-    new Error(
-      available === undefined
-        ? `Insufficient stock for product ${productId}. Requested ${requested}.`
-        : `Insufficient stock for product ${productId}. Requested ${requested}, available ${available}.`,
-    ),
-    { statusCode: 400 },
-  )
-
+// Every query is scoped by user_id, which comes from the verified token (req.user),
+// so one user can never read or change another user's cart.
 export class CartRepository {
-  async listCartItems(): Promise<Cart[]> {
-    const cartsResult = await query<CartRow>(
-      `SELECT id, user_id as "userId", created_at as "createdAt" FROM carts ORDER BY created_at DESC`,
-    )
-    const itemsResult = await query<CartItemRow>(
-      `SELECT id, cart_id as "cartId", product_id as "productId", quantity, created_at as "createdAt"
-       FROM cart_items ORDER BY created_at DESC`,
+  async getCart(userId: number): Promise<Cart> {
+    const result = await query<CartItemRow>(
+      `SELECT ci.product_id AS "productId", ci.quantity
+       FROM cart_items ci
+       JOIN carts c ON c.id = ci.cart_id
+       WHERE c.user_id = $1
+       ORDER BY ci.created_at, ci.id`,
+      [userId],
     )
 
-    const itemsByCart = groupBy(itemsResult.rows.map(toCartItem), (item) => item.cartId)
-
-    return cartsResult.rows.map((row) => ({
-      id: Number(row.id),
-      userId: Number(row.userId),
-      items: itemsByCart.get(Number(row.id)) ?? [],
-      createdAt: new Date(row.createdAt).toISOString(),
-    }))
+    return {
+      userId,
+      items: result.rows.map((row) => ({ productId: Number(row.productId), quantity: Number(row.quantity) })),
+    }
   }
 
-  async addItemToCart(userId: number, input: CreateCartItemInput): Promise<Cart> {
+  async addItem(userId: number, input: AddCartItemInput): Promise<Cart> {
     // Upserts instead of "SELECT, then INSERT if missing": two concurrent requests could both
     // see "missing" and both insert. ON CONFLICT lets the UNIQUE constraint decide atomically.
     // The no-op DO UPDATE makes RETURNING give back the existing row's id on conflict
     // (DO NOTHING would return no row).
-    const cartResult = await query(
+    const cartResult = await query<{ id: number }>(
       `INSERT INTO carts (user_id) VALUES ($1)
        ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
        RETURNING id`,
       [userId],
     )
-    const cartId = Number(cartResult.rows[0].id)
 
+    // INSERT ... SELECT only inserts if the product exists and is active, in the same statement.
     // Adding a product that's already in the cart increases its quantity.
-    await query(
-      `INSERT INTO cart_items (cart_id, product_id, quantity) VALUES ($1, $2, $3)
-       ON CONFLICT (cart_id, product_id) DO UPDATE SET quantity = cart_items.quantity + EXCLUDED.quantity`,
-      [cartId, input.productId, input.quantity ?? 1],
+    const itemResult = await query(
+      `INSERT INTO cart_items (cart_id, product_id, quantity)
+       SELECT $1, id, $3 FROM products WHERE id = $2 AND is_active = true
+       ON CONFLICT (cart_id, product_id) DO UPDATE SET quantity = cart_items.quantity + EXCLUDED.quantity
+       RETURNING product_id`,
+      [cartResult.rows[0].id, input.productId, input.quantity],
     )
 
-    const cartRowResult = await query<CartRow>(
-      `SELECT id, user_id as "userId", created_at as "createdAt" FROM carts WHERE id = $1`,
-      [cartId],
-    )
-    const itemsResult = await query<CartItemRow>(
-      `SELECT id, cart_id as "cartId", product_id as "productId", quantity, created_at as "createdAt"
-       FROM cart_items WHERE cart_id = $1 ORDER BY created_at DESC`,
-      [cartId],
-    )
-
-    const cartRow = cartRowResult.rows[0]
-
-    return {
-      id: Number(cartRow.id),
-      userId: Number(cartRow.userId),
-      items: itemsResult.rows.map(toCartItem),
-      createdAt: new Date(cartRow.createdAt).toISOString(),
+    if (itemResult.rowCount === 0) {
+      throw notFound(`Product ${input.productId} not found`)
     }
-  }
-}
 
-export class OrderRepository {
-  async listOrders(): Promise<Order[]> {
-    const ordersResult = await query<OrderRow>(
-      `SELECT id, user_id as "userId", total, status, created_at as "createdAt" FROM orders ORDER BY created_at DESC`,
-    )
-    const itemsResult = await query<OrderItemRow>(
-      `SELECT id, order_id as "orderId", product_id as "productId", quantity, unit_price as "unitPrice", created_at as "createdAt"
-       FROM order_items ORDER BY created_at DESC`,
-    )
-
-    const itemsByOrder = groupBy(itemsResult.rows.map(toOrderItem), (item) => item.orderId)
-
-    return ordersResult.rows.map((row) => toOrder(row, itemsByOrder.get(Number(row.id)) ?? []))
+    return this.getCart(userId)
   }
 
-  async createOrder(input: CreateOrderInput): Promise<Order> {
-    const total = input.items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
-
-    // Stock check, order insert and stock decrement succeed or fail together.
-    return transaction(async (query) => {
-      const productIds = [...new Set(input.items.map((item) => item.productId))]
-      const placeholders = productIds.map((_, index) => `$${index + 1}`).join(', ')
-      const productResult = await query(`SELECT id, stock FROM products WHERE id IN (${placeholders})`, productIds)
-
-      const productStockMap = new Map<number, number>(
-        productResult.rows.map((row) => [Number(row.id), Number(row.stock)]),
-      )
-
-      for (const item of input.items) {
-        const availableStock = productStockMap.get(item.productId)
-
-        if (availableStock === undefined) {
-          throw Object.assign(new Error(`Product ${item.productId} not found`), {
-            statusCode: 404,
-          })
-        }
-
-        if (item.quantity > availableStock) {
-          throw insufficientStockError(item.productId, item.quantity, availableStock)
-        }
-      }
-
-      const orderResult = await query<OrderRow>(
-        `INSERT INTO orders (user_id, total, status)
-         VALUES ($1, $2, 'PENDING')
-         RETURNING id, user_id as "userId", total, status, created_at as "createdAt"`,
-        [input.userId, total],
-      )
-
-      const orderRow = orderResult.rows[0]
-      const items: OrderItem[] = []
-
-      for (const item of input.items) {
-        const itemResult = await query<OrderItemRow>(
-          `INSERT INTO order_items (order_id, product_id, quantity, unit_price)
-           VALUES ($1, $2, $3, $4)
-           RETURNING id, order_id as "orderId", product_id as "productId", quantity, unit_price as "unitPrice", created_at as "createdAt"`,
-          [orderRow.id, item.productId, item.quantity, item.unitPrice],
-        )
-        items.push(toOrderItem(itemResult.rows[0]))
-
-        // The stock guard stops a concurrent order from taking the same units between
-        // the check above and this update.
-        const stockUpdate = await query(
-          `UPDATE products
-           SET stock = stock - $1
-           WHERE id = $2 AND stock >= $1`,
-          [item.quantity, item.productId],
-        )
-
-        if (stockUpdate.rowCount === 0) {
-          throw insufficientStockError(item.productId, item.quantity)
-        }
-      }
-
-      return toOrder(orderRow, items)
-    })
-  }
-
-  async updateOrderStatus(orderId: number, status: OrderStatus): Promise<Order> {
-    const result = await query<OrderRow>(
-      `UPDATE orders
-       SET status = $1
-       WHERE id = $2
-       RETURNING id, user_id as "userId", total, status, created_at as "createdAt"`,
-      [status, orderId],
+  async setItemQuantity(userId: number, productId: number, quantity: number): Promise<Cart> {
+    const result = await query(
+      `UPDATE cart_items ci SET quantity = $3
+       FROM carts c
+       WHERE c.id = ci.cart_id AND c.user_id = $1 AND ci.product_id = $2`,
+      [userId, productId, quantity],
     )
 
     if (result.rowCount === 0) {
-      throw Object.assign(new Error(`Order ${orderId} not found`), {
-        statusCode: 404,
-      })
+      throw notFound(`Product ${productId} is not in the cart`)
     }
 
-    const itemsResult = await query<OrderItemRow>(
-      `SELECT id, order_id as "orderId", product_id as "productId", quantity, unit_price as "unitPrice", created_at as "createdAt"
-       FROM order_items WHERE order_id = $1`,
-      [orderId],
+    return this.getCart(userId)
+  }
+
+  // Removing something that isn't there still succeeds: DELETE is idempotent, so a retried
+  // request (e.g. after a network blip) gives the same result instead of an error.
+  async removeItem(userId: number, productId: number): Promise<Cart> {
+    await query(
+      `DELETE FROM cart_items ci USING carts c
+       WHERE c.id = ci.cart_id AND c.user_id = $1 AND ci.product_id = $2`,
+      [userId, productId],
     )
 
-    return toOrder(result.rows[0], itemsResult.rows.map(toOrderItem))
+    return this.getCart(userId)
+  }
+
+  async clear(userId: number): Promise<Cart> {
+    await query(
+      `DELETE FROM cart_items ci USING carts c
+       WHERE c.id = ci.cart_id AND c.user_id = $1`,
+      [userId],
+    )
+
+    return this.getCart(userId)
   }
 }
 
 export const cartRepository = new CartRepository()
-export const orderRepository = new OrderRepository()

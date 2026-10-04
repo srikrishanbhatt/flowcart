@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { getAuthUser, requireAuth } from '../middleware/requireAuth.js'
 import { authService } from '../services/auth.service.js'
 
 const router = Router()
@@ -35,17 +36,9 @@ router.post('/login', async (req, res, next) => {
   }
 })
 
-router.get('/me', async (req, res, next) => {
+router.get('/me', requireAuth, async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization
-    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
-
-    if (!token) {
-      res.status(401).json({ success: false, message: 'Missing bearer token' })
-      return
-    }
-
-    const user = await authService.getCurrentUser(token)
+    const user = await authService.getCurrentUser(getAuthUser(req).email)
     res.status(200).json(user)
   } catch (error) {
     next(error)

@@ -15,6 +15,13 @@ export type LoginInput = {
   password: string
 }
 
+// The authenticated user attached to a request by requireAuth.
+export type AuthUser = {
+  id: number
+  email: string
+  role: User['role']
+}
+
 export type AuthTokenPayload = {
   sub: number
   email: string
@@ -95,23 +102,25 @@ export class AuthService {
     }
   }
 
-  async getCurrentUser(token: string) {
-    let email: string
-
+  // Checks the signature and expiry and returns who the token belongs to. No database
+  // lookup: that's what makes JWTs cheap to verify on every request (see requireAuth).
+  verifyToken(token: string): AuthUser {
     try {
       const decoded = jwt.verify(token, env.JWT_SECRET)
 
-      if (typeof decoded === 'string' || typeof decoded.email !== 'string') {
+      if (typeof decoded === 'string' || typeof decoded.email !== 'string' || typeof decoded.role !== 'string') {
         throw new Error('Malformed token payload')
       }
 
-      email = decoded.email
+      return { id: Number(decoded.sub), email: decoded.email, role: decoded.role as User['role'] }
     } catch {
       const error = new Error('Invalid or expired token') as Error & { statusCode?: number }
       error.statusCode = 401
       throw error
     }
+  }
 
+  async getCurrentUser(email: string) {
     const user = await userRepository.findByEmail(email)
 
     if (!user) {

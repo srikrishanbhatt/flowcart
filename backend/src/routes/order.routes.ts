@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { orderService } from '../services/cart.service.js'
+import { orderService } from '../services/order.service.js'
 
 // Mounted at /api/orders
 const router = Router()

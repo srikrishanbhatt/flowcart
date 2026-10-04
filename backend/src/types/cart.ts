@@ -1,16 +1,12 @@
 export type CartItem = {
-  id: number
-  cartId: number
   productId: number
   quantity: number
-  createdAt: string
 }
 
+// Each user has at most one cart, so the API exposes it by user, not by cart id.
 export type Cart = {
-  id: number
   userId: number
   items: CartItem[]
-  createdAt: string
 }
 
 export type OrderStatus = 'PENDING' | 'PAID' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED'
@@ -33,9 +29,9 @@ export type Order = {
   createdAt: string
 }
 
-export type CreateCartItemInput = {
+export type AddCartItemInput = {
   productId: number
-  quantity?: number
+  quantity: number
 }
 
 export type CreateOrderInput = {

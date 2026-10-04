@@ -1,29 +1,26 @@
-import { cartRepository, orderRepository } from '../repositories/cart.repository.js'
-import type { Cart, CreateCartItemInput, CreateOrderInput, Order, OrderStatus } from '../types/cart.js'
+import { cartRepository } from '../repositories/cart.repository.js'
+import type { AddCartItemInput, Cart } from '../types/cart.js'
 
 export class CartService {
-  async listCartItems(): Promise<Cart[]> {
-    return cartRepository.listCartItems()
+  async getCart(userId: number): Promise<Cart> {
+    return cartRepository.getCart(userId)
   }
 
-  async addItemToCart(userId: number, input: CreateCartItemInput): Promise<Cart> {
-    return cartRepository.addItemToCart(userId, input)
-  }
-}
-
-export class OrderService {
-  async listOrders(): Promise<Order[]> {
-    return orderRepository.listOrders()
+  async addItem(userId: number, input: AddCartItemInput): Promise<Cart> {
+    return cartRepository.addItem(userId, input)
   }
 
-  async createOrder(input: CreateOrderInput): Promise<Order> {
-    return orderRepository.createOrder(input)
+  async setItemQuantity(userId: number, productId: number, quantity: number): Promise<Cart> {
+    return cartRepository.setItemQuantity(userId, productId, quantity)
   }
 
-  async updateOrderStatus(orderId: number, status: OrderStatus): Promise<Order> {
-    return orderRepository.updateOrderStatus(orderId, status)
+  async removeItem(userId: number, productId: number): Promise<Cart> {
+    return cartRepository.removeItem(userId, productId)
+  }
+
+  async clear(userId: number): Promise<Cart> {
+    return cartRepository.clear(userId)
   }
 }
 
 export const cartService = new CartService()
-export const orderService = new OrderService()

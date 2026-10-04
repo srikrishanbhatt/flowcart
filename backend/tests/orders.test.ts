@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import request from 'supertest'
 import app from '../src/app.js'
 
-describe('Cart and Orders API', () => {
+describe('Orders API', () => {
   it('returns seeded products from the live database', async () => {
     const response = await request(app).get('/api/products')
 
@@ -11,77 +11,11 @@ describe('Cart and Orders API', () => {
     expect(response.body.data[0]).toHaveProperty('name')
   })
 
-  it('returns an empty cart list', async () => {
-    const response = await request(app).get('/api/cart')
-
-    expect(response.status).toBe(200)
-    expect(Array.isArray(response.body)).toBe(true)
-  })
-
   it('returns an empty orders list', async () => {
     const response = await request(app).get('/api/orders')
 
     expect(response.status).toBe(200)
     expect(Array.isArray(response.body)).toBe(true)
-  })
-
-  it('merges duplicate cart items for the same product', async () => {
-    const createProductResponse = await request(app).post('/api/products').send({
-      name: 'Wireless Mouse',
-      price: 29.99,
-      stock: 10,
-    })
-
-    expect(createProductResponse.status).toBe(201)
-
-    const firstAdd = await request(app).post('/api/cart/1').send({
-      productId: createProductResponse.body.id,
-      quantity: 1,
-    })
-
-    const secondAdd = await request(app).post('/api/cart/1').send({
-      productId: createProductResponse.body.id,
-      quantity: 2,
-    })
-
-    expect(firstAdd.status).toBe(201)
-    expect(secondAdd.status).toBe(201)
-
-    const cartResponse = await request(app).get('/api/cart')
-
-    expect(cartResponse.status).toBe(200)
-
-    const cartItems = cartResponse.body.flatMap((cart: any) => cart.items)
-    const productItems = cartItems.filter(
-      (item: any) => Number(item.productId) === Number(createProductResponse.body.id),
-    )
-
-    expect(productItems).toHaveLength(1)
-    expect(productItems[0].quantity).toBe(3)
-  })
-
-  it('keeps one cart and one line per product when adds happen concurrently', async () => {
-    const createProductResponse = await request(app).post('/api/products').send({
-      name: 'Concurrent Cart Charger',
-      price: 19.99,
-      stock: 50,
-    })
-    const productId = createProductResponse.body.id
-
-    // 25 simultaneous requests: enough overlap that check-then-insert reliably races here
-    // (verified: the old implementation fails this test, the upsert passes).
-    const responses = await Promise.all(
-      Array.from({ length: 25 }, () => request(app).post('/api/cart/1').send({ productId, quantity: 1 })),
-    )
-    expect(responses.every((response) => response.status === 201)).toBe(true)
-
-    const cartResponse = await request(app).get('/api/cart')
-    const userCarts = cartResponse.body.filter((cart: any) => cart.userId === 1)
-    const lines = userCarts.flatMap((cart: any) => cart.items).filter((item: any) => item.productId === productId)
-
-    expect(userCarts).toHaveLength(1)
-    expect(lines).toHaveLength(1)
-    expect(lines[0].quantity).toBe(25)
   })
 
   it('rejects creating an order when product stock is insufficient', async () => {

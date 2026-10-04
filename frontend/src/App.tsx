@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
+import { ApiError, apiRequest } from './api'
 import './App.css'
 import { AuthPanel } from './components/AuthPanel'
 import { CartPanel } from './components/CartPanel'
 import { ProductCatalog } from './components/ProductCatalog'
 import type { AuthForm, AuthMode, Category, CartItem, Product, UserSession } from './types'
+
+type CartResponse = { userId: number; items: CartItem[] }
 
 const fallbackProducts: Product[] = [
   {
@@ -70,6 +73,8 @@ function App() {
   const [token, setToken] = useState<string | null>(() => readSavedSession()?.token ?? null)
   const [authMessage, setAuthMessage] = useState('')
   const [authError, setAuthError] = useState('')
+  const [cartError, setCartError] = useState('')
+  const [cartMessage, setCartMessage] = useState('')
 
   useEffect(() => {
     if (!token || !user) {
@@ -79,6 +84,41 @@ function App() {
 
     localStorage.setItem('flowcart-session', JSON.stringify({ token, user }))
   }, [token, user])
+
+  // The server owns the cart. Load it whenever the logged-in user changes: after login,
+  // and on page refresh (when the token is restored from localStorage).
+  useEffect(() => {
+    if (!token) {
+      return
+    }
+
+    // If the token changes while this request is in flight (e.g. logout, then login as
+    // someone else), ignore the stale response so it can't overwrite the newer cart.
+    let ignore = false
+
+    apiRequest<CartResponse>('/api/cart', { token })
+      .then((serverCart) => {
+        if (!ignore) setCart(serverCart.items)
+      })
+      .catch((error: unknown) => {
+        if (ignore) return
+
+        if (error instanceof ApiError && error.status === 401) {
+          // The saved token has expired or is invalid: sign the user out.
+          setToken(null)
+          setUser(null)
+          setCart([])
+          setAuthError('Your session has expired. Please log in again.')
+          return
+        }
+
+        setCartError(error instanceof Error ? error.message : 'Could not load your cart')
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [token])
 
   useEffect(() => {
     const loadData = async () => {
@@ -113,80 +153,86 @@ function App() {
     void loadData()
   }, [])
 
-  const addToCart = async (productId: number) => {
-    const existingItem = cart.find((item) => item.productId === productId)
-    const nextQuantity = (existingItem?.quantity ?? 0) + 1
+  // Sends a cart change to the server, then replaces local state with the cart the server
+  // returns. The server is the source of truth, so the UI can't drift from the database.
+  const syncCart = async (request: (token: string) => Promise<CartResponse>) => {
+    setCartError('')
+    setCartMessage('')
 
-    const nextCart = existingItem
-      ? cart.map((item) => (item.productId === productId ? { ...item, quantity: nextQuantity } : item))
-      : [...cart, { productId, quantity: 1 }]
-
-    setCart(nextCart)
+    if (!token) {
+      setAuthMode('login')
+      setCartError('Please log in to add items to your cart.')
+      return
+    }
 
     try {
-      await fetch('http://localhost:4000/api/cart/1', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productId, quantity: 1 }),
-      })
-    } catch {
-      // intentionally ignore API failure in this learning-stage storefront
+      const serverCart = await request(token)
+      setCart(serverCart.items)
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        handleLogout()
+        setAuthError('Your session has expired. Please log in again.')
+        return
+      }
+
+      setCartError(error instanceof Error ? error.message : 'Could not update your cart')
     }
   }
+
+  const addToCart = (productId: number) =>
+    syncCart((authToken) =>
+      apiRequest<CartResponse>('/api/cart/items', { method: 'POST', token: authToken, body: { productId } }),
+    )
 
   const updateCartQuantity = (productId: number, delta: number) => {
-    setCart((currentCart) => {
-      const existingItem = currentCart.find((item) => item.productId === productId)
+    const item = cart.find((entry) => entry.productId === productId)
 
-      if (!existingItem) {
-        return currentCart
-      }
+    if (!item) {
+      return
+    }
 
-      const nextQuantity = existingItem.quantity + delta
+    const quantity = item.quantity + delta
 
-      if (nextQuantity <= 0) {
-        return currentCart.filter((item) => item.productId !== productId)
-      }
+    if (quantity <= 0) {
+      return removeFromCart(productId)
+    }
 
-      return currentCart.map((item) => (item.productId === productId ? { ...item, quantity: nextQuantity } : item))
-    })
+    return syncCart((authToken) =>
+      apiRequest<CartResponse>(`/api/cart/items/${productId}`, {
+        method: 'PATCH',
+        token: authToken,
+        body: { quantity },
+      }),
+    )
   }
 
+  const removeFromCart = (productId: number) =>
+    syncCart((authToken) =>
+      apiRequest<CartResponse>(`/api/cart/items/${productId}`, { method: 'DELETE', token: authToken }),
+    )
+
   const checkoutOrder = async () => {
-    if (cart.length === 0) {
+    if (!token || !user || cart.length === 0) {
       return
     }
 
-    const items = cart
-      .map((item) => {
-        const product = products.find((entry) => entry.id === item.productId)
+    setCartError('')
+    setCartMessage('')
 
-        if (!product) {
-          return null
-        }
-
-        return {
-          productId: item.productId,
-          quantity: item.quantity,
-          unitPrice: product.price,
-        }
-      })
-      .filter((item): item is { productId: number; quantity: number; unitPrice: number } => item !== null)
-
-    if (items.length === 0) {
-      return
-    }
+    const items = cart.flatMap((item) => {
+      const product = products.find((entry) => entry.id === item.productId)
+      return product ? [{ productId: item.productId, quantity: item.quantity, unitPrice: product.price }] : []
+    })
 
     try {
-      await fetch('http://localhost:4000/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: 1, items }),
-      })
-
-      setCart([])
-    } catch {
-      // intentionally ignore API failure in this learning-stage storefront
+      // Orders still take userId from the body; Phase 3 moves this to the token as well.
+      await apiRequest('/api/orders', { method: 'POST', body: { userId: user.id, items } })
+      // Only empty the cart once the order has actually succeeded.
+      const serverCart = await apiRequest<CartResponse>('/api/cart', { method: 'DELETE', token })
+      setCart(serverCart.items)
+      setCartMessage('Order placed successfully!')
+    } catch (error) {
+      setCartError(error instanceof Error ? error.message : 'Could not place your order')
     }
   }
 
@@ -255,6 +301,9 @@ function App() {
   const handleLogout = () => {
     setToken(null)
     setUser(null)
+    setCart([])
+    setCartError('')
+    setCartMessage('')
     setAuthMessage('Logged out successfully.')
     setAuthError('')
   }
@@ -369,7 +418,11 @@ function App() {
             cart={cart}
             products={products}
             cartSummary={cartSummary}
+            isLoggedIn={user !== null}
+            cartError={cartError}
+            cartMessage={cartMessage}
             onQuantityChange={updateCartQuantity}
+            onRemove={removeFromCart}
             onCheckout={checkoutOrder}
           />
         </div>
