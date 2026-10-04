@@ -109,32 +109,24 @@ export class CartRepository {
   }
 
   async addItemToCart(userId: number, input: CreateCartItemInput): Promise<Cart> {
-    let cartResult = await query(`SELECT id FROM carts WHERE user_id = $1 LIMIT 1`, [userId])
-
-    if (cartResult.rowCount === 0) {
-      cartResult = await query(`INSERT INTO carts (user_id) VALUES ($1) RETURNING id`, [userId])
-    }
-
+    // Upserts instead of "SELECT, then INSERT if missing": two concurrent requests could both
+    // see "missing" and both insert. ON CONFLICT lets the UNIQUE constraint decide atomically.
+    // The no-op DO UPDATE makes RETURNING give back the existing row's id on conflict
+    // (DO NOTHING would return no row).
+    const cartResult = await query(
+      `INSERT INTO carts (user_id) VALUES ($1)
+       ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
+       RETURNING id`,
+      [userId],
+    )
     const cartId = Number(cartResult.rows[0].id)
-    const quantityToAdd = input.quantity ?? 1
 
-    const existingItemResult = await query(`SELECT id FROM cart_items WHERE cart_id = $1 AND product_id = $2 LIMIT 1`, [
-      cartId,
-      input.productId,
-    ])
-
-    if (existingItemResult.rowCount > 0) {
-      await query(`UPDATE cart_items SET quantity = quantity + $1 WHERE id = $2`, [
-        quantityToAdd,
-        existingItemResult.rows[0].id,
-      ])
-    } else {
-      await query(`INSERT INTO cart_items (cart_id, product_id, quantity) VALUES ($1, $2, $3)`, [
-        cartId,
-        input.productId,
-        quantityToAdd,
-      ])
-    }
+    // Adding a product that's already in the cart increases its quantity.
+    await query(
+      `INSERT INTO cart_items (cart_id, product_id, quantity) VALUES ($1, $2, $3)
+       ON CONFLICT (cart_id, product_id) DO UPDATE SET quantity = cart_items.quantity + EXCLUDED.quantity`,
+      [cartId, input.productId, input.quantity ?? 1],
+    )
 
     const cartRowResult = await query<CartRow>(
       `SELECT id, user_id as "userId", created_at as "createdAt" FROM carts WHERE id = $1`,

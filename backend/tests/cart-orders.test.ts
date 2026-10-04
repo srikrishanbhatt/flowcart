@@ -7,9 +7,8 @@ describe('Cart and Orders API', () => {
     const response = await request(app).get('/api/products')
 
     expect(response.status).toBe(200)
-    expect(Array.isArray(response.body)).toBe(true)
-    expect(response.body.length).toBeGreaterThan(0)
-    expect(response.body[0]).toHaveProperty('name')
+    expect(response.body.data.length).toBeGreaterThan(0)
+    expect(response.body.data[0]).toHaveProperty('name')
   })
 
   it('returns an empty cart list', async () => {
@@ -59,6 +58,30 @@ describe('Cart and Orders API', () => {
 
     expect(productItems).toHaveLength(1)
     expect(productItems[0].quantity).toBe(3)
+  })
+
+  it('keeps one cart and one line per product when adds happen concurrently', async () => {
+    const createProductResponse = await request(app).post('/api/products').send({
+      name: 'Concurrent Cart Charger',
+      price: 19.99,
+      stock: 50,
+    })
+    const productId = createProductResponse.body.id
+
+    // 25 simultaneous requests: enough overlap that check-then-insert reliably races here
+    // (verified: the old implementation fails this test, the upsert passes).
+    const responses = await Promise.all(
+      Array.from({ length: 25 }, () => request(app).post('/api/cart/1').send({ productId, quantity: 1 })),
+    )
+    expect(responses.every((response) => response.status === 201)).toBe(true)
+
+    const cartResponse = await request(app).get('/api/cart')
+    const userCarts = cartResponse.body.filter((cart: any) => cart.userId === 1)
+    const lines = userCarts.flatMap((cart: any) => cart.items).filter((item: any) => item.productId === productId)
+
+    expect(userCarts).toHaveLength(1)
+    expect(lines).toHaveLength(1)
+    expect(lines[0].quantity).toBe(25)
   })
 
   it('rejects creating an order when product stock is insufficient', async () => {
@@ -124,8 +147,8 @@ describe('Cart and Orders API', () => {
     expect(response.status).toBe(400)
     expect(response.body.message).toMatch(/stock/i)
 
-    const products = await request(app).get('/api/products')
-    const product = products.body.find((item: any) => Number(item.id) === Number(productId))
+    const products = await request(app).get('/api/products').query({ search: 'Last Unit Webcam' })
+    const product = products.body.data.find((item: any) => Number(item.id) === Number(productId))
     expect(Number(product.stock)).toBe(1)
 
     const ordersAfter = await request(app).get('/api/orders')

@@ -84,12 +84,13 @@ function App() {
     const loadData = async () => {
       try {
         const [productsResponse, categoriesResponse] = await Promise.all([
-          fetch('http://localhost:4000/api/products'),
+          // The API is paginated; the storefront still filters client-side, so fetch the largest page.
+          fetch('http://localhost:4000/api/products?limit=100'),
           fetch('http://localhost:4000/api/categories'),
         ])
 
         if (productsResponse.ok) {
-          const productData = (await productsResponse.json()) as Product[]
+          const { data: productData } = (await productsResponse.json()) as { data: Product[] }
           setProducts(productData.length > 0 ? productData : fallbackProducts)
         } else {
           setProducts(fallbackProducts)

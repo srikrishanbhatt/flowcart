@@ -221,7 +221,7 @@ Examples:
 ## Current status
 
 - **Phase 1 — Project Foundation:** complete.
-- **Phase 2 — Database and CRUD:** in progress. Core tables, CRUD endpoints and migrations exist; indexes, pagination/filtering/sorting and inventory are still to do.
+- **Phase 2 — Database and CRUD:** in progress. Core tables, CRUD endpoints, migrations, indexes and product pagination/filtering/sorting exist; the inventory model is still to do.
 - **Phase 3 — Authentication:** registration, login and `/me` exist, but routes are not protected yet. This will be reworked in Phase 3.
 
 ## Getting started
@@ -253,7 +253,8 @@ Quality checks, available in both `backend/` and `frontend/`:
 | `npm run typecheck` (backend) / `npm run build` (frontend) | TypeScript |
 | `npm test` (backend) | Vitest + Supertest against a separate `flowcart_test` database |
 | `npm run migrate:create <name>` (backend) | New SQL migration in `backend/db/migrations` (never edit one that has already run) |
+| `npm run bench:indexes` (backend) | Times product queries on 100k rows with and without indexes, then rolls everything back |
 
 ## Next step
 
-Finish Phase 2: indexes, pagination/filtering/sorting and the inventory model.
+Finish Phase 2: the inventory model.

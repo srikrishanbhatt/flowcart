@@ -15,7 +15,8 @@
     "migrate": "node-pg-migrate up -m db/migrations",
     "migrate:down": "node-pg-migrate down -m db/migrations",
     "migrate:create": "node-pg-migrate create -m db/migrations -j sql",
-    "seed": "tsx scripts/seed.ts"
+    "seed": "tsx scripts/seed.ts",
+    "bench:indexes": "tsx scripts/benchmark-indexes.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
